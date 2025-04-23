@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebRTC Auth + Partner Picker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h2>🎥 WebRTC Video Call</h2>
+    <div id="profile">Not logged in</div>
+
+    <!-- Login/Logout -->
+    <div class="form-group">
+      <input type="email" id="email" placeholder="Email">
+      <input type="password" id="password" placeholder="Password">
+      <button id="login">Login</button>
+    </div>
+
+    <!-- Appointment -->
+    <div class="form-group">
+      <input id="appointmentId" placeholder="Appointment ID" />
+      <button id="join" disabled>Join</button>
+    </div>
+
+    <!-- Call Controls -->
+    <div class="form-group receiver-container">
+      <input id="receiverId" placeholder="Receiver User ID" autocomplete="off" />
+      <button id="call" disabled>Call</button>
+      <button id="end" disabled>End</button>
+      <div id="receiverDropdown" class="dropdown" style="display: none;"></div>
+    </div>
+
+    <!-- A/V Toggles -->
+    <div class="form-group">
+      <button id="toggleMic" disabled>Mute Mic</button>
+      <button id="toggleCam" disabled>Turn Off Camera</button>
+    </div>
+
+    <!-- Videos -->
+    <div class="videos">
+      <video id="localVideo" autoplay muted></video>
+      <video id="remoteVideo" autoplay></video>
+    </div>
+
+    <!-- Status -->
+    <div id="status">Status: Not connected</div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
