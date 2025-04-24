@@ -1,4 +1,4 @@
-const BASE_URL = "https://org-reaches-sk-turned.trycloudflare.com";
+const BASE_URL = "https://checks-cleaning-backup-selling.trycloudflare.com";
 
 let socket, pc, localStream;
 let callId, currentReceiver, currentAppointment;
@@ -10,6 +10,7 @@ let audioTrack, videoTrack;
 let micMuted = false,
   camOff = false;
 let isLoggedIn = false;
+let isVideoCall = false;
 
 const log = (msg) => {
   console.log("[LOG]", msg);
@@ -106,6 +107,8 @@ function connectSocket() {
     currentReceiver = data.caller;
     currentAppointment = data.appointmentId;
 
+    isVideoCall = data.offer?.sdp?.includes("m=video") || false;
+
     await setupMedia();
     createPeer();
 
@@ -131,7 +134,7 @@ function connectSocket() {
   });
 }
 
-// Partner picker
+// Receiver dropdown (partner list)
 receiverInput.addEventListener("focus", async () => {
   if (!token) return;
 
@@ -167,28 +170,17 @@ document.addEventListener("click", (e) => {
   }
 });
 
-function enableAll() {
-  document
-    .querySelectorAll("button:not(#login)")
-    .forEach((b) => (b.disabled = false));
-}
-
-function disableAll() {
-  document
-    .querySelectorAll("button:not(#login)")
-    .forEach((b) => (b.disabled = true));
-}
-
-// Main call logic
-document.getElementById("join").onclick = () => {
-  const appointmentId = document.getElementById("appointmentId").value.trim();
-  if (!socket || !appointmentId) return log("Enter appointment ID.");
-  currentAppointment = appointmentId;
-  socket.emit("join", { appointmentId });
-  log("Joined appointment.");
+document.getElementById("audioCall").onclick = async () => {
+  isVideoCall = false;
+  await initiateCall();
 };
 
-document.getElementById("call").onclick = async () => {
+document.getElementById("videoCall").onclick = async () => {
+  isVideoCall = true;
+  await initiateCall();
+};
+
+async function initiateCall() {
   const receiver = document.getElementById("receiverId").value.trim();
   if (!receiver || !currentAppointment)
     return log("Please fill in all fields.");
@@ -207,7 +199,53 @@ document.getElementById("call").onclick = async () => {
     offer,
   });
 
-  log("Calling...");
+  log(`Calling with ${isVideoCall ? "video" : "audio"}...`);
+}
+
+async function setupMedia() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia(
+      isVideoCall ? { video: true, audio: true } : { audio: true }
+    );
+  } catch (error) {
+    log("Media error: " + error.message);
+    return;
+  }
+
+  document.getElementById("localVideo").srcObject = localStream;
+  const audioTracks = localStream.getAudioTracks();
+  const videoTracks = localStream.getVideoTracks();
+  audioTrack = audioTracks[0] || null;
+  videoTrack = videoTracks[0] || null;
+}
+
+function createPeer() {
+  pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      socket.emit("iceCandidate", {
+        callId,
+        candidate: e.candidate,
+        to: currentReceiver,
+      });
+    }
+  };
+
+  pc.ontrack = (e) => {
+    document.getElementById("remoteVideo").srcObject = e.streams[0];
+  };
+}
+
+document.getElementById("join").onclick = () => {
+  const appointmentId = document.getElementById("appointmentId").value.trim();
+  if (!socket || !appointmentId) return log("Enter appointment ID.");
+  currentAppointment = appointmentId;
+  socket.emit("join", { appointmentId });
+  log("Joined appointment.");
 };
 
 document.getElementById("end").onclick = () => {
@@ -237,37 +275,6 @@ document.getElementById("toggleCam").onclick = () => {
     : "Turn Off Camera";
 };
 
-async function setupMedia() {
-  localStream = await navigator.mediaDevices.getUserMedia({
-    video: true,
-    audio: true,
-  });
-  document.getElementById("localVideo").srcObject = localStream;
-  audioTrack = localStream.getAudioTracks()[0];
-  videoTrack = localStream.getVideoTracks()[0];
-}
-
-function createPeer() {
-  pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
-
-  pc.onicecandidate = (e) => {
-    if (e.candidate) {
-      socket.emit("iceCandidate", {
-        callId,
-        candidate: e.candidate,
-        to: currentReceiver,
-      });
-    }
-  };
-
-  pc.ontrack = (e) => {
-    document.getElementById("remoteVideo").srcObject = e.streams[0];
-  };
-}
-
 function endCall() {
   if (pc) pc.close();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
@@ -287,4 +294,16 @@ function flushCandidates() {
     async (c) => await pc.addIceCandidate(new RTCIceCandidate(c))
   );
   candidateQueue = [];
+}
+
+function enableAll() {
+  document.querySelectorAll("button:not(#login)").forEach((btn) => {
+    btn.disabled = false;
+  });
+}
+
+function disableAll() {
+  document.querySelectorAll("button:not(#login)").forEach((btn) => {
+    btn.disabled = true;
+  });
 }
