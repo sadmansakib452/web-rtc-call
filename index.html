@@ -2,76 +2,65 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>WebRTC Auth + Partner Picker</title>
+  <title>WebRTC Telemedicine App</title>
   <link rel="stylesheet" href="style.css" />
-  <style>
-    .dropdown {
-      position: absolute;
-      background: #fff;
-      border: 1px solid #ccc;
-      max-height: 200px;
-      overflow-y: auto;
-      z-index: 9999;
-      width: 100%;
-      margin-top: 5px;
-      border-radius: 6px;
-      box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
-    }
-
-    .dropdown-item {
-      padding: 8px 12px;
-      cursor: pointer;
-      border-bottom: 1px solid #eee;
-    }
-
-    .dropdown-item:hover {
-      background: #f5f5f5;
-    }
-  </style>
 </head>
 <body>
   <div class="container">
-    <h2>🎥 WebRTC Video Call</h2>
+    <h2>🎥 WebRTC Telemedicine</h2>
     <div id="profile">Not logged in</div>
 
-    <!-- Login/Logout -->
+    <!-- Login Section -->
     <div class="form-group">
-      <input type="email" id="email" placeholder="Email">
-      <input type="password" id="password" placeholder="Password">
+      <input type="email" id="email" placeholder="Email" />
+      <input type="password" id="password" placeholder="Password" />
       <button id="login">Login</button>
     </div>
 
-    <!-- Appointment -->
-    <div class="form-group">
-      <input id="appointmentId" placeholder="Appointment ID" />
-      <button id="join" disabled>Join</button>
-    </div>
-
-    <!-- Call Controls -->
-    <div class="form-group receiver-container" style="position: relative;">
-      <input id="receiverId" placeholder="Receiver User ID" autocomplete="off" />
+    <!-- Receiver and Call Controls -->
+    <div class="form-group receiver-container">
+      <input id="receiverId" placeholder="Select a call partner" autocomplete="off" readonly />
       <button id="audioCall" disabled>Audio Call</button>
       <button id="videoCall" disabled>Video Call</button>
       <button id="end" disabled>End</button>
       <div id="receiverDropdown" class="dropdown" style="display: none;"></div>
     </div>
 
-    <!-- A/V Toggles -->
+    <!-- A/V Toggle -->
     <div class="form-group">
       <button id="toggleMic" disabled>Mute Mic</button>
       <button id="toggleCam" disabled>Turn Off Camera</button>
     </div>
 
-    <!-- Videos -->
+    <!-- Video Streams -->
     <div class="videos">
       <video id="localVideo" autoplay muted></video>
       <video id="remoteVideo" autoplay></video>
     </div>
 
-    <!-- Status -->
+    <!-- Status Display -->
     <div id="status">Status: Not connected</div>
   </div>
 
+  <!-- Incoming Call Modal -->
+  <div id="callModal" class="call-modal hidden">
+    <div class="modal-content">
+      <h3>📞 Incoming Call</h3>
+      <p id="callerInfo">You're receiving a call...</p>
+      <div class="modal-actions">
+        <button id="acceptCall" class="btn accept">Accept</button>
+        <button id="rejectCall" class="btn reject">Reject</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast for Missed Call -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Ringtone -->
+  <audio id="ringtone" src="ringtone.mp3" preload="auto" loop></audio>
+
+  <!-- Scripts -->
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <script src="script.js"></script>
 </body>
