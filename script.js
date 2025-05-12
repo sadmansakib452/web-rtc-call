@@ -51,6 +51,12 @@ let chunkSequence = 0;
 let recordedChunks = [];
 let isRecording = false;
 
+// Add new variables for recording
+let audioContext = null;
+let canvas = null;
+let canvasContext = null;
+let recordingFPS = 30;
+
 // Change these lines (around line 13-15)
 const ringtone = document.getElementById("ringtone");
 const incomingModal = document.getElementById("callModal"); // Changed from "incomingCallModal"
@@ -88,6 +94,14 @@ document.addEventListener("DOMContentLoaded", () => {
     // Restore session
     restoreSession();
   }
+
+  // Add canvas element to HTML
+  const canvas = document.createElement("canvas");
+  canvas.id = "recordingCanvas";
+  canvas.width = 1280;
+  canvas.height = 720;
+  canvas.style.display = "none";
+  document.body.appendChild(canvas);
 });
 
 // Add this new function to restore a user session
@@ -540,28 +554,7 @@ async function endCall() {
     // First stop recording if active
     if (isRecording) {
       log("Stopping recording before ending call...");
-
-      // Create a promise to handle recording stop
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error("Recording stop timeout"));
-        }, 5000);
-
-        // Store the original onstop handler
-        const originalOnStop = mediaRecorder.onstop;
-
-        // Override onstop to ensure it completes
-        mediaRecorder.onstop = () => {
-          clearTimeout(timeout);
-          if (originalOnStop) originalOnStop();
-          resolve();
-        };
-
-        // Stop the recording
-        stopRecording();
-      });
-
-      log("Recording stopped successfully");
+      cleanupRecording();
     }
 
     // Then emit end call event using stored values
@@ -704,7 +697,19 @@ async function handleOAuthCallback() {
 // Call handleOAuthCallback immediately
 handleOAuthCallback();
 
-// Add recording functions
+// Add recording status indicator
+function updateRecordingStatus(isRecording) {
+  const recordBtn = document.getElementById("toggleRecording");
+  if (isRecording) {
+    recordBtn.classList.add("recording-active");
+    recordBtn.innerHTML = '<span class="recording-dot"></span> Stop Recording';
+  } else {
+    recordBtn.classList.remove("recording-active");
+    recordBtn.innerHTML = "Start Recording";
+  }
+}
+
+// Update startRecording function
 async function startRecording() {
   try {
     if (!pc || !localStream) {
@@ -719,149 +724,244 @@ async function startRecording() {
       return;
     }
 
+    // Initialize canvas if not already done
+    if (!canvas) {
+      canvas = document.getElementById("recordingCanvas");
+      if (!canvas) {
+        throw new Error("Canvas element not found");
+      }
+      canvasContext = canvas.getContext("2d");
+      if (!canvasContext) {
+        throw new Error("Could not get canvas context");
+      }
+    }
+
     // Generate unique recording ID
     recordingId = crypto.randomUUID();
     chunkSequence = 0;
     recordedChunks = [];
 
     // Get all streams
-    const tracks = [];
-    const localAudio = localStream.getAudioTracks()[0];
-    const remoteStream = document.getElementById("remoteVideo").srcObject;
+    const localVideo = document.getElementById("localVideo");
+    const remoteVideo = document.getElementById("remoteVideo");
 
-    if (localAudio) {
-      tracks.push(localAudio);
-      logRecordingDebug("Local audio track added");
+    if (!localVideo || !remoteVideo) {
+      throw new Error("Video elements not found");
     }
 
-    if (remoteStream) {
-      const remoteAudio = remoteStream.getAudioTracks()[0];
-      if (remoteAudio) {
-        tracks.push(remoteAudio);
-        logRecordingDebug("Remote audio track added");
+    // Create audio context for mixing
+    try {
+      audioContext = new AudioContext();
+      const destination = audioContext.createMediaStreamDestination();
+
+      // Add local audio
+      if (localStream) {
+        const localAudioSource =
+          audioContext.createMediaStreamSource(localStream);
+        localAudioSource.connect(destination);
+        logRecordingDebug("Local audio track added to mix");
       }
 
-      if (isVideoCall) {
-        const localVideo = localStream.getVideoTracks()[0];
-        const remoteVideo = remoteStream.getVideoTracks()[0];
+      // Add remote audio
+      const remoteStream = remoteVideo.srcObject;
+      if (remoteStream) {
+        const remoteAudioSource =
+          audioContext.createMediaStreamSource(remoteStream);
+        remoteAudioSource.connect(destination);
+        logRecordingDebug("Remote audio track added to mix");
+      }
 
-        if (localVideo) {
-          // Configure video track settings
-          const videoSettings = {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 30 },
-          };
+      // Setup canvas recording
+      const canvasStream = canvas.captureStream(recordingFPS);
 
-          try {
-            await localVideo.applyConstraints(videoSettings);
-            tracks.push(localVideo);
-            logRecordingDebug(
-              "Local video track added with settings:",
-              localVideo.getSettings()
-            );
-          } catch (error) {
-            console.error("Failed to apply video constraints:", error);
+      let frameCount = 0;
+      let lastFrameTime = performance.now();
+      let frameDropCount = 0;
+
+      function drawFrame() {
+        try {
+          const currentTime = performance.now();
+          const elapsed = currentTime - lastFrameTime;
+
+          canvasContext.clearRect(0, 0, canvas.width, canvas.height);
+          const halfWidth = canvas.width / 2;
+          const height = canvas.height;
+
+          if (remoteVideo.readyState >= 2) {
+            canvasContext.drawImage(remoteVideo, 0, 0, halfWidth, height);
           }
-        }
 
-        if (remoteVideo) {
-          tracks.push(remoteVideo);
-          logRecordingDebug("Remote video track added");
+          if (localVideo.readyState >= 2) {
+            canvasContext.drawImage(
+              localVideo,
+              halfWidth,
+              0,
+              halfWidth,
+              height
+            );
+          }
+
+          frameCount++;
+
+          // Check for frame drops
+          if (elapsed > (1000 / recordingFPS) * 1.5) {
+            frameDropCount++;
+            if (frameDropCount > 10) {
+              log("Warning: High frame drop rate detected");
+              frameDropCount = 0;
+            }
+          }
+
+          lastFrameTime = currentTime;
+
+          if (mediaRecorder && mediaRecorder.state === "recording") {
+            requestAnimationFrame(drawFrame);
+          }
+        } catch (error) {
+          console.error("Error in drawFrame:", error);
+          log("Recording error: " + error.message);
+          stopRecording();
         }
       }
-    }
 
-    const combinedStream = new MediaStream(tracks);
-    logRecordingDebug(
-      "Combined stream created with tracks:",
-      combinedStream
-        .getTracks()
-        .map((t) => ({ kind: t.kind, enabled: t.enabled }))
-    );
+      // Combine video (canvas) + audio into one stream
+      const combinedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...destination.stream.getAudioTracks(),
+      ]);
 
-    // Create MediaRecorder with appropriate mime type
-    mediaRecorder = new MediaRecorder(combinedStream, {
-      mimeType: supportedMimeType,
-      audioBitsPerSecond: 128000,
-      videoBitsPerSecond: isVideoCall ? 2500000 : undefined,
-    });
+      logRecordingDebug(
+        "Combined stream created with tracks:",
+        combinedStream
+          .getTracks()
+          .map((t) => ({ kind: t.kind, enabled: t.enabled }))
+      );
 
-    // Handle data available event
-    mediaRecorder.ondataavailable = async (event) => {
-      if (event.data.size > 0) {
-        logRecordingDebug("Chunk available", {
-          size: event.data.size,
-          type: event.data.type,
-          sequence: chunkSequence,
-        });
-
-        recordedChunks.push(event.data);
-        const arrayBuffer = await event.data.arrayBuffer();
-
-        // Emit chunk through WebSocket
-        socket.emit("recordingChunk", {
-          recordingId,
-          sequence: chunkSequence++,
-          chunk: Array.from(new Uint8Array(arrayBuffer)),
-          appointmentId: currentAppointment,
-        });
-      }
-    };
-
-    // Handle recording stop
-    mediaRecorder.onstop = () => {
-      logRecordingDebug("Recording stopped");
-      socket.emit("recordingEnded", {
-        recordingId,
-        appointmentId: currentAppointment,
+      // Create MediaRecorder with appropriate mime type
+      mediaRecorder = new MediaRecorder(combinedStream, {
+        mimeType: supportedMimeType,
+        audioBitsPerSecond: 128000,
+        videoBitsPerSecond: isVideoCall ? 2500000 : undefined,
       });
 
-      // Create downloadable file
-      const blob = new Blob(recordedChunks, { type: supportedMimeType });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `recording_${new Date().toISOString()}.webm`;
-      a.click();
-      URL.revokeObjectURL(url);
-    };
+      // Handle data available event
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data.size > 0) {
+          logRecordingDebug("Chunk available", {
+            size: event.data.size,
+            type: event.data.type,
+            sequence: chunkSequence,
+          });
 
-    // Add error handling
-    mediaRecorder.onerror = (error) => {
-      console.error("MediaRecorder error:", error);
-      log("Recording error: " + error.message);
-      stopRecording();
-    };
+          recordedChunks.push(event.data);
+          const arrayBuffer = await event.data.arrayBuffer();
+          const chunkSize = 1024 * 1024; // 1MB chunks
+          const chunks = splitArrayBuffer(arrayBuffer, chunkSize);
 
-    // Start recording with 1-second chunks
-    mediaRecorder.start(1000);
-    isRecording = true;
-    document.getElementById("toggleRecording").textContent = "Stop Recording";
-    log("Recording started");
+          for (const chunk of chunks) {
+            socket.emit("recordingChunk", {
+              recordingId,
+              sequence: chunkSequence++,
+              chunk: Array.from(new Uint8Array(chunk)),
+              appointmentId: currentAppointment,
+            });
+          }
+        }
+      };
 
-    // Notify other participant
-    socket.emit("recordingStarted", {
-      appointmentId: currentAppointment,
-      receiver: currentReceiver,
-    });
+      // Handle recording stop
+      mediaRecorder.onstop = () => {
+        logRecordingDebug("Recording stopped");
+        socket.emit("recordingEnded", {
+          recordingId,
+          appointmentId: currentAppointment,
+        });
 
-    logRecordingDebug("Recording started with settings", {
-      mimeType: mediaRecorder.mimeType,
-      state: mediaRecorder.state,
-      videoTrack: combinedStream.getVideoTracks()[0]?.getSettings(),
-    });
+        // Create downloadable file
+        const blob = new Blob(recordedChunks, { type: supportedMimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `recording_${new Date().toISOString()}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        // Cleanup audio context
+        if (audioContext) {
+          audioContext.close();
+          audioContext = null;
+        }
+
+        updateRecordingStatus(false);
+      };
+
+      // Add error handling
+      mediaRecorder.onerror = (error) => {
+        console.error("MediaRecorder error:", error);
+        log("Recording error: " + error.message);
+        stopRecording();
+      };
+
+      // Start recording with 1-second chunks
+      mediaRecorder.start(1000);
+      isRecording = true;
+      updateRecordingStatus(true);
+      log("Recording started");
+
+      // Start drawing frames
+      drawFrame();
+
+      // Notify other participant
+      socket.emit("recordingStarted", {
+        appointmentId: currentAppointment,
+        receiver: currentReceiver,
+      });
+
+      logRecordingDebug("Recording started with settings", {
+        mimeType: mediaRecorder.mimeType,
+        state: mediaRecorder.state,
+        videoTrack: combinedStream.getVideoTracks()[0]?.getSettings(),
+      });
+    } catch (error) {
+      console.error("Error setting up recording:", error);
+      log("Recording setup failed: " + error.message);
+      cleanupRecording();
+      throw error;
+    }
   } catch (error) {
     console.error("Failed to start recording:", error);
     log("Recording failed to start: " + error.message);
+    updateRecordingStatus(false);
   }
 }
 
+// Add helper function for splitting array buffer
+function splitArrayBuffer(arrayBuffer, chunkSize) {
+  const chunks = [];
+  for (let i = 0; i < arrayBuffer.byteLength; i += chunkSize) {
+    chunks.push(arrayBuffer.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+// Add cleanup function for recording
+function cleanupRecording() {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    mediaRecorder.stop();
+  }
+  if (audioContext) {
+    audioContext.close();
+    audioContext = null;
+  }
+  isRecording = false;
+  updateRecordingStatus(false);
+}
+
+// Update stopRecording function
 function stopRecording() {
   if (mediaRecorder && isRecording) {
     mediaRecorder.stop();
     isRecording = false;
-    document.getElementById("toggleRecording").textContent = "Start Recording";
     log("Recording stopped");
 
     // Notify other participant

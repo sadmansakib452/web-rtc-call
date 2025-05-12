@@ -179,8 +179,12 @@ video:hover {
     background-color: #e74c3c;
 }
 
+/* Recording button styles */
 #toggleRecording {
     background-color: #e74c3c;
+    transition: all 0.3s ease;
+    position: relative;
+    padding-left: 35px;
 }
 
 #toggleRecording:hover {
@@ -189,7 +193,38 @@ video:hover {
 
 #toggleRecording[disabled] {
     background-color: #bdc3c7;
+    cursor: not-allowed;
 }
+
+#toggleRecording.recording-active {
+    background-color: #c0392b;
+    animation: pulse 2s infinite;
+}
+
+.recording-dot {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 12px;
+    background-color: #fff;
+    border-radius: 50%;
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0% { opacity: 1; }
+    50% { opacity: 0.4; }
+    100% { opacity: 1; }
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+}
+
 .btn {
     padding: 10px 20px;
     border-radius: 6px;
