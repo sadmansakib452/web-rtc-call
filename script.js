@@ -1,4 +1,35 @@
-const BASE_URL = "http://192.168.4.4:5000";
+const BASE_URL = "http://192.168.4.4:4000";
+
+// Add browser support check
+function checkRecordingSupport() {
+  const mimeTypes = [
+    "video/webm;codecs=vp8,opus",
+    "video/webm;codecs=vp9,opus",
+    "video/webm",
+  ];
+
+  const supportedType = mimeTypes.find((type) =>
+    MediaRecorder.isTypeSupported(type)
+  );
+
+  if (!supportedType) {
+    console.error("No supported video recording format found");
+    return false;
+  }
+
+  console.log("Supported recording format:", supportedType);
+  return supportedType;
+}
+
+// Add debug logging
+function logRecordingDebug(message, data = null) {
+  const timestamp = new Date().toISOString();
+  if (data) {
+    console.log(`[Recording Debug ${timestamp}] ${message}:`, data);
+  } else {
+    console.log(`[Recording Debug ${timestamp}] ${message}`);
+  }
+}
 
 let socket, pc, localStream;
 let callId, currentReceiver, currentAppointment;
@@ -12,6 +43,13 @@ let micMuted = false,
 let isLoggedIn = false;
 let isVideoCall = false;
 let userRole = null;
+
+// Recording variables
+let mediaRecorder = null;
+let recordingId = null;
+let chunkSequence = 0;
+let recordedChunks = [];
+let isRecording = false;
 
 // Change these lines (around line 13-15)
 const ringtone = document.getElementById("ringtone");
@@ -30,6 +68,43 @@ const btnLogin = document.getElementById("login");
 const receiverInput = document.getElementById("receiverId");
 const dropdown = document.getElementById("receiverDropdown");
 
+// Near the top of your file, after variable declarations
+// Add this code to load saved data when the page loads
+document.addEventListener("DOMContentLoaded", () => {
+  // Try to load saved session data
+  const savedToken = localStorage.getItem("token");
+  const savedEmail = localStorage.getItem("userEmail");
+
+  if (savedToken) {
+    token = savedToken;
+    isLoggedIn = true;
+    btnLogin.innerText = "Logout";
+
+    // Restore email field if available
+    if (savedEmail) {
+      document.getElementById("email").value = savedEmail;
+    }
+
+    // Restore session
+    restoreSession();
+  }
+});
+
+// Add this new function to restore a user session
+async function restoreSession() {
+  try {
+    await showProfile();
+    connectSocket();
+    enableAll();
+    log("Session restored. Welcome back!");
+  } catch (err) {
+    // If there's an error (like expired token), log out
+    log("Session expired. Please login again.");
+    logoutUser();
+  }
+}
+
+// Modify your login function to save the token and email
 btnLogin.onclick = async () => {
   if (isLoggedIn) return logoutUser();
 
@@ -47,6 +122,10 @@ btnLogin.onclick = async () => {
     if (!data.success) return log("Login failed: " + data.message);
 
     token = data.authorization.token;
+    // Save token and email to localStorage
+    localStorage.setItem("token", token);
+    localStorage.setItem("userEmail", email);
+
     await showProfile();
     connectSocket();
     enableAll();
@@ -58,19 +137,13 @@ btnLogin.onclick = async () => {
   }
 };
 
-async function showProfile() {
-  const res = await fetch(`${BASE_URL}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const result = await res.json();
-  const user = result.data;
-  userRole = user.type;
-  document.getElementById(
-    "profile"
-  ).innerText = `👤 ${user.name} (${user.email})`;
-}
-
+// REMOVE the duplicate logoutUser function that appears around line 127
+// Keep only this updated version
 function logoutUser() {
+  // Clear all localStorage items
+  localStorage.removeItem("token");
+  localStorage.removeItem("userEmail");
+
   token = null;
   isLoggedIn = false;
   userRole = null;
@@ -87,8 +160,48 @@ function logoutUser() {
   log("Logged out.");
 }
 
+async function showProfile() {
+  const res = await fetch(`${BASE_URL}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const result = await res.json();
+  const user = result.data;
+  userRole = user.type;
+  document.getElementById(
+    "profile"
+  ).innerText = `👤 ${user.name} (${user.email})`;
+  showRecordingControls();
+}
+
+function showRecordingControls() {
+  const recordBtn = document.getElementById("toggleRecording");
+  if (userRole === "coach") {
+    recordBtn.style.display = "block";
+    recordBtn.disabled = !isLoggedIn;
+  }
+}
+
 function connectSocket() {
   socket = io(BASE_URL, { auth: { token } });
+
+  socket.on("recordingStarted", () => {
+    log("Call recording has started");
+  });
+
+  socket.on("recordingStopped", () => {
+    log("Call recording has stopped");
+  });
+
+  socket.on("recordingChunkReceived", (data) => {
+    console.log("Received recording chunk:", data.sequence);
+  });
+
+  socket.on("recordingError", (error) => {
+    log("Recording error: " + error.message);
+    if (isRecording) {
+      stopRecording();
+    }
+  });
 
   socket.on("connect", () => {
     selfSocketId = socket.id;
@@ -118,17 +231,19 @@ function connectSocket() {
   socket.on("missedCall", (data) => {
     // Log the entire data object for debugging
     console.log("Missed call data:", data);
-    
+
     // Check if data has expected properties
     if (!data.caller || !data.appointmentId) {
       log("Invalid missed call data received");
       return;
     }
-    
+
     // Log the message if it exists, otherwise create a default message
-    const message = data.message || `You missed a call from your ${data.isDoctorCall ? 'doctor' : 'patient'}`;
+    const message =
+      data.message ||
+      `You missed a call from your ${data.isDoctorCall ? "doctor" : "patient"}`;
     log("Missed call: " + message);
-    
+
     // Pass the data to the notification function
     showMissedCallNotification(data);
   });
@@ -215,16 +330,20 @@ function showMissedCallNotification(data) {
 
   const toast = document.createElement("div");
   toast.className = "toast";
-  
+
   // Create message with fallback for isDoctorCall
-  const callerType = data.isDoctorCall !== undefined ? 
-    (data.isDoctorCall ? "doctor" : "patient") : "caller";
-  
+  const callerType =
+    data.isDoctorCall !== undefined
+      ? data.isDoctorCall
+        ? "doctor"
+        : "patient"
+      : "caller";
+
   toast.innerHTML = `
     <div><strong>Missed Call:</strong> You missed a call from your ${callerType}</div>
     <button>Call Back</button>
   `;
-  
+
   toast.querySelector("button").onclick = () => {
     currentAppointment = data.appointmentId;
     currentReceiver = data.caller;
@@ -232,7 +351,7 @@ function showMissedCallNotification(data) {
     initiateCall();
     toast.remove();
   };
-  
+
   toastContainer.appendChild(toast);
   setTimeout(() => toast.remove(), 10000);
 }
@@ -339,14 +458,34 @@ async function initiateCall() {
 
 async function setupMedia() {
   try {
-    localStream = await navigator.mediaDevices.getUserMedia(
-      isVideoCall ? { video: true, audio: true } : { audio: true }
-    );
+    const constraints = {
+      audio: true,
+      video: isVideoCall
+        ? {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+          }
+        : false,
+    };
+
+    localStream = await navigator.mediaDevices.getUserMedia(constraints);
     document.getElementById("localVideo").srcObject = localStream;
+
     audioTrack = localStream.getAudioTracks()[0] || null;
     videoTrack = localStream.getVideoTracks()[0] || null;
+
+    if (videoTrack) {
+      logRecordingDebug("Video track settings:", videoTrack.getSettings());
+    }
+
+    logRecordingDebug("Media setup complete", {
+      hasAudio: !!audioTrack,
+      hasVideo: !!videoTrack,
+    });
   } catch (err) {
     log("Media error: " + err.message);
+    console.error("Media setup error:", err);
   }
 }
 
@@ -369,13 +508,8 @@ function createPeer() {
   };
 }
 
-document.getElementById("end").onclick = () => {
-  socket.emit("endCall", {
-    callId,
-    receiver: currentReceiver,
-    appointmentId: currentAppointment,
-  });
-  endCall();
+document.getElementById("end").onclick = async () => {
+  await endCall();
 };
 
 document.getElementById("toggleMic").onclick = () => {
@@ -396,7 +530,73 @@ document.getElementById("toggleCam").onclick = () => {
     : "Turn Off Camera";
 };
 
-function endCall() {
+async function endCall() {
+  try {
+    // Store callId and other values before any async operations
+    const currentCallId = callId;
+    const currentReceiverId = currentReceiver;
+    const currentAppointmentId = currentAppointment;
+
+    // First stop recording if active
+    if (isRecording) {
+      log("Stopping recording before ending call...");
+
+      // Create a promise to handle recording stop
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Recording stop timeout"));
+        }, 5000);
+
+        // Store the original onstop handler
+        const originalOnStop = mediaRecorder.onstop;
+
+        // Override onstop to ensure it completes
+        mediaRecorder.onstop = () => {
+          clearTimeout(timeout);
+          if (originalOnStop) originalOnStop();
+          resolve();
+        };
+
+        // Stop the recording
+        stopRecording();
+      });
+
+      log("Recording stopped successfully");
+    }
+
+    // Then emit end call event using stored values
+    log("Sending end call event...");
+    socket.emit("endCall", {
+      callId: currentCallId,
+      receiver: currentReceiverId,
+      appointmentId: currentAppointmentId,
+    });
+
+    // Finally cleanup
+    log("Cleaning up resources...");
+    if (pc) pc.close();
+    if (localStream) localStream.getTracks().forEach((t) => t.stop());
+    pc = null;
+    localStream = null;
+    callId = null;
+    remoteDescSet = false;
+    candidateQueue = [];
+    document.getElementById("localVideo").srcObject = null;
+    document.getElementById("remoteVideo").srcObject = null;
+    document.getElementById("end").disabled = true;
+    hideIncomingModal();
+    ringtone.pause();
+    log("Call ended successfully");
+  } catch (error) {
+    console.error("Error ending call:", error);
+    log("Error ending call: " + error.message);
+    // Still try to cleanup even if there's an error
+    cleanup();
+  }
+}
+
+// Separate cleanup function
+function cleanup() {
   if (pc) pc.close();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
   pc = null;
@@ -409,7 +609,6 @@ function endCall() {
   document.getElementById("end").disabled = true;
   hideIncomingModal();
   ringtone.pause();
-  log("Call ended.");
 }
 
 function flushCandidates() {
@@ -419,14 +618,311 @@ function flushCandidates() {
   candidateQueue = [];
 }
 
+// Update the enableAll function to exclude the End button
 function enableAll() {
+  // Enable all buttons except login and end
   document
-    .querySelectorAll("button:not(#login)")
+    .querySelectorAll("button:not(#login):not(#end)")
     .forEach((btn) => (btn.disabled = false));
+
+  // Ensure end button is disabled
+  document.getElementById("end").disabled = true;
 }
 
 function disableAll() {
   document
     .querySelectorAll("button:not(#login)")
     .forEach((btn) => (btn.disabled = true));
+}
+
+// Add this near the top where other DOM elements are defined
+const btnGoogleLogin = document.getElementById("googleLogin");
+
+// Modify Google login handler
+btnGoogleLogin.onclick = () => {
+  // Get selected user type
+  const userType = document.querySelector(
+    'input[name="userType"]:checked'
+  ).value;
+
+  // Redirect to Google OAuth endpoint with user type
+  window.location.href = `${BASE_URL}/api/auth/google?userType=${userType}`;
+};
+
+async function handleOAuthCallback() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const code = urlParams.get("code");
+
+  if (code) {
+    try {
+      // Get the user type from localStorage if it was saved during redirect
+      const userType = urlParams.get("state") || "user";
+
+      const response = await fetch(`${BASE_URL}/api/auth/google/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          code,
+          userType,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        // Store the token and user data
+        token = data.data.token;
+        localStorage.setItem("token", token);
+        localStorage.setItem("userEmail", data.data.user.email);
+
+        isLoggedIn = true;
+        btnLogin.innerText = "Logout";
+
+        // Update profile and connect socket
+        await showProfile();
+        connectSocket();
+        enableAll();
+        log("Logged in with Google successfully.");
+
+        // Clean up the URL and redirect to the main page
+        const baseUrl = window.location.origin + window.location.pathname;
+        window.location.href = baseUrl;
+      } else {
+        log("Google login failed: " + (data.message || "Unknown error"));
+        // Redirect to main page with error parameter
+        window.location.href = "/?error=google_login_failed";
+      }
+    } catch (error) {
+      log("Google login error: " + error.message);
+      // Redirect to main page with error parameter
+      window.location.href = "/?error=google_login_error";
+    }
+  }
+}
+
+// Call handleOAuthCallback immediately
+handleOAuthCallback();
+
+// Add recording functions
+async function startRecording() {
+  try {
+    if (!pc || !localStream) {
+      log("No active call to record");
+      return;
+    }
+
+    // Check browser support
+    const supportedMimeType = checkRecordingSupport();
+    if (!supportedMimeType) {
+      log("Your browser doesn't support video recording");
+      return;
+    }
+
+    // Generate unique recording ID
+    recordingId = crypto.randomUUID();
+    chunkSequence = 0;
+    recordedChunks = [];
+
+    // Get all streams
+    const tracks = [];
+    const localAudio = localStream.getAudioTracks()[0];
+    const remoteStream = document.getElementById("remoteVideo").srcObject;
+
+    if (localAudio) {
+      tracks.push(localAudio);
+      logRecordingDebug("Local audio track added");
+    }
+
+    if (remoteStream) {
+      const remoteAudio = remoteStream.getAudioTracks()[0];
+      if (remoteAudio) {
+        tracks.push(remoteAudio);
+        logRecordingDebug("Remote audio track added");
+      }
+
+      if (isVideoCall) {
+        const localVideo = localStream.getVideoTracks()[0];
+        const remoteVideo = remoteStream.getVideoTracks()[0];
+
+        if (localVideo) {
+          // Configure video track settings
+          const videoSettings = {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 },
+          };
+
+          try {
+            await localVideo.applyConstraints(videoSettings);
+            tracks.push(localVideo);
+            logRecordingDebug(
+              "Local video track added with settings:",
+              localVideo.getSettings()
+            );
+          } catch (error) {
+            console.error("Failed to apply video constraints:", error);
+          }
+        }
+
+        if (remoteVideo) {
+          tracks.push(remoteVideo);
+          logRecordingDebug("Remote video track added");
+        }
+      }
+    }
+
+    const combinedStream = new MediaStream(tracks);
+    logRecordingDebug(
+      "Combined stream created with tracks:",
+      combinedStream
+        .getTracks()
+        .map((t) => ({ kind: t.kind, enabled: t.enabled }))
+    );
+
+    // Create MediaRecorder with appropriate mime type
+    mediaRecorder = new MediaRecorder(combinedStream, {
+      mimeType: supportedMimeType,
+      audioBitsPerSecond: 128000,
+      videoBitsPerSecond: isVideoCall ? 2500000 : undefined,
+    });
+
+    // Handle data available event
+    mediaRecorder.ondataavailable = async (event) => {
+      if (event.data.size > 0) {
+        logRecordingDebug("Chunk available", {
+          size: event.data.size,
+          type: event.data.type,
+          sequence: chunkSequence,
+        });
+
+        recordedChunks.push(event.data);
+        const arrayBuffer = await event.data.arrayBuffer();
+
+        // Emit chunk through WebSocket
+        socket.emit("recordingChunk", {
+          recordingId,
+          sequence: chunkSequence++,
+          chunk: Array.from(new Uint8Array(arrayBuffer)),
+          appointmentId: currentAppointment,
+        });
+      }
+    };
+
+    // Handle recording stop
+    mediaRecorder.onstop = () => {
+      logRecordingDebug("Recording stopped");
+      socket.emit("recordingEnded", {
+        recordingId,
+        appointmentId: currentAppointment,
+      });
+
+      // Create downloadable file
+      const blob = new Blob(recordedChunks, { type: supportedMimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `recording_${new Date().toISOString()}.webm`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    // Add error handling
+    mediaRecorder.onerror = (error) => {
+      console.error("MediaRecorder error:", error);
+      log("Recording error: " + error.message);
+      stopRecording();
+    };
+
+    // Start recording with 1-second chunks
+    mediaRecorder.start(1000);
+    isRecording = true;
+    document.getElementById("toggleRecording").textContent = "Stop Recording";
+    log("Recording started");
+
+    // Notify other participant
+    socket.emit("recordingStarted", {
+      appointmentId: currentAppointment,
+      receiver: currentReceiver,
+    });
+
+    logRecordingDebug("Recording started with settings", {
+      mimeType: mediaRecorder.mimeType,
+      state: mediaRecorder.state,
+      videoTrack: combinedStream.getVideoTracks()[0]?.getSettings(),
+    });
+  } catch (error) {
+    console.error("Failed to start recording:", error);
+    log("Recording failed to start: " + error.message);
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && isRecording) {
+    mediaRecorder.stop();
+    isRecording = false;
+    document.getElementById("toggleRecording").textContent = "Start Recording";
+    log("Recording stopped");
+
+    // Notify other participant
+    socket.emit("recordingStopped", {
+      appointmentId: currentAppointment,
+      receiver: currentReceiver,
+    });
+  }
+}
+
+// Add recording button event listener
+document.getElementById("toggleRecording").addEventListener("click", () => {
+  if (!isRecording) {
+    startRecording();
+  } else {
+    stopRecording();
+  }
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  // Try to load saved session data
+  const savedToken = localStorage.getItem("token");
+  const savedEmail = localStorage.getItem("userEmail");
+
+  // Add recording button styles
+  const recordingStyle = document.createElement("style");
+  recordingStyle.textContent = `
+    .recording-btn {
+      background-color: #e74c3c;
+    }
+    .recording-btn:hover {
+      background-color: #c0392b;
+    }
+    .recording-btn[disabled] {
+      background-color: #bdc3c7;
+    }
+  `;
+  document.head.appendChild(recordingStyle);
+
+  if (savedToken) {
+    token = savedToken;
+    isLoggedIn = true;
+    btnLogin.innerText = "Logout";
+
+    // Restore email field if available
+    if (savedEmail) {
+      document.getElementById("email").value = savedEmail;
+    }
+
+    // Restore session
+    restoreSession();
+  }
+
+  // Check for OAuth callback
+  handleOAuthCallback();
+});
+
+// Add this after the showProfile function
+function showRecordingControls() {
+  const recordBtn = document.getElementById("toggleRecording");
+  if (userRole === "coach") {
+    recordBtn.style.display = "block";
+  }
 }

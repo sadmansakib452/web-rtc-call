@@ -1,67 +1,94 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>WebRTC Telemedicine App</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <div class="container">
-    <h2>🎥 WebRTC Telemedicine</h2>
-    <div id="profile">Not logged in</div>
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebRTC Telemedicine App</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h2>🎥 WebRTC Telemedicine</h2>
+      <div id="profile">Not logged in</div>
 
-    <!-- Login Section -->
-    <div class="form-group">
-      <input type="email" id="email" placeholder="Email" />
-      <input type="password" id="password" placeholder="Password" />
-      <button id="login">Login</button>
+      <!-- Login Section -->
+      <div class="form-group">
+        <input type="email" id="email" placeholder="Email" />
+        <input type="password" id="password" placeholder="Password" />
+        <button id="login">Login</button>
+        <div class="google-login-container">
+          <div class="user-type-selection">
+            <label>
+              <input type="radio" name="userType" value="user" checked /> User
+            </label>
+            <label>
+              <input type="radio" name="userType" value="coach" /> Coach
+            </label>
+          </div>
+          <button id="googleLogin" class="google-btn">
+            Sign in with Google
+          </button>
+        </div>
+      </div>
+
+      <!-- Receiver and Call Controls -->
+      <div class="form-group receiver-container">
+        <input
+          id="receiverId"
+          placeholder="Select a call partner"
+          autocomplete="off"
+          readonly
+        />
+        <button id="audioCall" disabled>Audio Call</button>
+        <button id="videoCall" disabled>Video Call</button>
+        <button id="end" disabled>End</button>
+        <div id="receiverDropdown" class="dropdown" style="display: none"></div>
+      </div>
+
+      <!-- A/V Toggle -->
+      <div class="form-group">
+        <button id="toggleMic" disabled>Mute Mic</button>
+        <button id="toggleCam" disabled>Turn Off Camera</button>
+        <!-- Add recording controls (only visible for coach) -->
+        <button
+          id="toggleRecording"
+          class="recording-btn"
+          disabled
+          style="display: none"
+        >
+          Start Recording
+        </button>
+      </div>
+
+      <!-- Video Streams -->
+      <div class="videos">
+        <video id="localVideo" autoplay muted></video>
+        <video id="remoteVideo" autoplay></video>
+      </div>
+
+      <!-- Status Display -->
+      <div id="status">Status: Not connected</div>
     </div>
 
-    <!-- Receiver and Call Controls -->
-    <div class="form-group receiver-container">
-      <input id="receiverId" placeholder="Select a call partner" autocomplete="off" readonly />
-      <button id="audioCall" disabled>Audio Call</button>
-      <button id="videoCall" disabled>Video Call</button>
-      <button id="end" disabled>End</button>
-      <div id="receiverDropdown" class="dropdown" style="display: none;"></div>
-    </div>
-
-    <!-- A/V Toggle -->
-    <div class="form-group">
-      <button id="toggleMic" disabled>Mute Mic</button>
-      <button id="toggleCam" disabled>Turn Off Camera</button>
-    </div>
-
-    <!-- Video Streams -->
-    <div class="videos">
-      <video id="localVideo" autoplay muted></video>
-      <video id="remoteVideo" autoplay></video>
-    </div>
-
-    <!-- Status Display -->
-    <div id="status">Status: Not connected</div>
-  </div>
-
-  <!-- Incoming Call Modal -->
-  <div id="callModal" class="call-modal hidden">
-    <div class="modal-content">
-      <h3>📞 Incoming Call</h3>
-      <p id="callerInfo">You're receiving a call...</p>
-      <div class="modal-actions">
-        <button id="acceptCall" class="btn accept">Accept</button>
-        <button id="rejectCall" class="btn reject">Reject</button>
+    <!-- Incoming Call Modal -->
+    <div id="callModal" class="call-modal hidden">
+      <div class="modal-content">
+        <h3>📞 Incoming Call</h3>
+        <p id="callerInfo">You're receiving a call...</p>
+        <div class="modal-actions">
+          <button id="acceptCall" class="btn accept">Accept</button>
+          <button id="rejectCall" class="btn reject">Reject</button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Toast for Missed Call -->
-  <div id="toastContainer" class="toast-container"></div>
+    <!-- Toast for Missed Call -->
+    <div id="toastContainer" class="toast-container"></div>
 
-  <!-- Ringtone -->
-  <audio id="ringtone" src="ringtone.mp3" preload="auto" loop></audio>
+    <!-- Ringtone -->
+    <audio id="ringtone" src="ringtone.mp3" preload="auto" loop></audio>
 
-  <!-- Scripts -->
-  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-  <script src="script.js"></script>
-</body>
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="script.js"></script>
+  </body>
 </html>
